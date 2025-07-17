@@ -49,7 +49,7 @@ def download_prices_alpha_vantage(tickers):
                 print(f'No data for {t}')
         except Exception as e:
             print(f'Alpha Vantage error for {t}: {e}')
-        time.sleep(12)  # AV limit: 5 requests/minute. Don't decrease!
+        time.sleep(2)  # AV limit: 5 requests/minute. Don't decrease!
     if not dfs:
         return pd.DataFrame(index=pd.to_datetime([]))
     df = pd.concat(dfs, axis=1)
