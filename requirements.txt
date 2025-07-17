@@ -3,5 +3,4 @@ pandas
 numpy
 requests
 plotly
-curl_cffi
 yfinance
