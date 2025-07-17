@@ -2,41 +2,27 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import warnings
 import plotly.express as px
+import warnings
 import time
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # ─── CONFIG ─────────────────────
 START = '1990-01-01'
-
 factor_tickers = [
     'SPY', 'TLT', 'HYG', 'DBC', 'EEM', 'UUP', 'TIP',
     'SVXY', 'SHY', 'CWY', 'USMV', 'MTUM', 'QUAL', 'IVE', 'IWM', 'ACWI',
     'GLD', 'USO', 'VIXY'
 ]
-
 rename_map = {
-    'SPY': 'Equity',
-    'TLT': 'Interest Rates',
-    'HYG': 'Credit',
-    'DBC': 'Commodities',
-    'EEM': 'Emerging Markets',
-    'UUP': 'FX',
-    'TIP': 'Real Yields',
-    'SVXY': 'Equity Short Vol',
-    'CWY': 'FX Carry',
-    'USMV': 'Low Risk',
-    'MTUM': 'Momentum',
-    'QUAL': 'Quality',
-    'IVE': 'Value',
-    'IWM': 'Small Cap',
-    'GLD': 'Gold',
-    'USO': 'Oil',
-    'VIXY': 'Volatility'
+    'SPY': 'Equity',        'TLT': 'Interest Rates',    'HYG': 'Credit',
+    'DBC': 'Commodities',   'EEM': 'Emerging Markets',  'UUP': 'FX',
+    'TIP': 'Real Yields',   'SVXY': 'Equity Short Vol', 'CWY': 'FX Carry',
+    'USMV': 'Low Risk',     'MTUM': 'Momentum',         'QUAL': 'Quality',
+    'IVE': 'Value',         'IWM': 'Small Cap',         'GLD': 'Gold',
+    'USO': 'Oil',           'VIXY': 'Volatility'
 }
-
 factor_cols = [
     'Equity', 'Interest Rates', 'Credit', 'Commodities',
     'Emerging Markets', 'FX', 'Real Yields', 'Local Inflation', 'Local Equity',
@@ -55,7 +41,6 @@ def download_prices(tickers, max_tries=2):
                 df = yf.download(t, start=START, auto_adjust=False, progress=False)
                 if not df.empty:
                     col = 'Adj Close' if 'Adj Close' in df.columns else 'Close'
-                    # yfinance index is usually Date or DatetimeIndex
                     frame = df[[col]].rename(columns={col: t})
                     dfs.append(frame)
                     break
@@ -66,7 +51,7 @@ def download_prices(tickers, max_tries=2):
             time.sleep(1)
     if not dfs:
         print('All ticker downloads failed! Check your internet, firewall, or API limits.')
-        # Empty DataFrame with DatetimeIndex to avoid .resample errors
+        # Ensure DatetimeIndex to avoid .resample error
         return pd.DataFrame(index=pd.to_datetime([]))
     prices = pd.concat(dfs, axis=1)
     if not isinstance(prices.index, pd.DatetimeIndex):
@@ -74,14 +59,13 @@ def download_prices(tickers, max_tries=2):
             prices.index = pd.to_datetime(prices.index)
         except Exception as e:
             print("Error converting index to DatetimeIndex:", e)
-            # Resample will still break, but at least you get a clear message
     prices = prices.loc[:, ~prices.columns.duplicated()]
     prices.columns.name = None
     return prices
 
 def prepare_factors():
     price_df = download_prices(factor_tickers)
-    # If prices are empty or index is not datetime, stop here
+    # Abort if data is empty or no dates
     if price_df.empty or not isinstance(price_df.index, pd.DatetimeIndex):
         return pd.DataFrame()
     price_df = price_df.resample('MS').last()
@@ -107,7 +91,7 @@ def prepare_factors():
         f.loc[tlt.index, 'FI Carry'] = tlt - shy
     else:
         f['FI Carry'] = pd.NA
-    # Trend (12M change in SPY)
+    # Trend
     if 'SPY' in price_df.columns:
         f['Trend'] = price_df['SPY'].pct_change(12)
     else:
@@ -126,7 +110,6 @@ def get_rf(index):
 
 def download_fund_prices(fund_tickers):
     fund_prices = download_prices(fund_tickers)
-    # If download failed or date index is not DateTime, stop here
     if fund_prices.empty or not isinstance(fund_prices.index, pd.DatetimeIndex):
         return pd.DataFrame()
     return fund_prices
@@ -146,7 +129,8 @@ def load_and_merge_all_data(fund_tickers):
     if fund_rets.empty:
         return None
     df = fund_rets.join(factors, how='outer').ffill().dropna()
-    # Edge case: indexes may not overlap—ensure merging is robust
+    if df.empty:
+        return None
     rf_aligned = rf.reindex(df.index, method='ffill').astype(float)
     for fund in fund_rets.columns:
         df[f'{fund}_Excess'] = df[fund] - rf_aligned
@@ -184,10 +168,7 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
     df_to_plot['Date'] = df_to_plot.index
     df_melted = df_to_plot.melt(id_vars="Date", var_name="Factor", value_name="Beta")
     fig = px.line(
-        df_melted,
-        x="Date",
-        y="Beta",
-        color="Factor",
+        df_melted, x="Date", y="Beta", color="Factor",
         title=f"Rolling Betas: Top {top_n} Most Variable Factors",
         labels={"Beta": "Beta"},
     )
@@ -195,12 +176,12 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
     return fig
 
 # ─── STREAMLIT UI ──────────────────────────
+
 st.title('Multi‑Factor Exposures Dashboard')
-
 st.markdown("""
-Analyze rolling and static multi-factor exposures for any mutual fund, ETF, or index with a ticker. Enter the fund ticker below, select your rolling window, and click "Run Analysis".
+Analyze rolling and static multi-factor exposures for any mutual fund, ETF, or index with a ticker. 
+Enter the fund ticker below, select your rolling window, and click "Run Analysis".
 """)
-
 fund_ticker = st.text_input('Fund ticker (e.g. SGIIX)', value='SGIIX')
 window = st.slider('Rolling window (months)', min_value=12, max_value=60, value=36, step=6)
 top_n = st.slider('Max betas to plot (plotly)', 2, 10, 5)
@@ -212,9 +193,11 @@ if st.button('Run Analysis'):
         with st.spinner('Downloading and analyzing data...'):
             df = load_and_merge_all_data([fund_ticker])
         if df is None or df.empty or not any(f in df.columns for f in factor_cols):
-            st.error(f'No usable return or factor data for ticker {fund_ticker}.\n\n'
-                     'Tip: This may be due to temporary Yahoo/yfinance outages. Try re-running in a few minutes. '
-                     'If no ETF/fund/stock tickers work, check your internet or firewall.')
+            st.error(
+                f'No usable return or factor data for ticker {fund_ticker}. \n\n'
+                'This is often due to temporary Yahoo/yfinance API outages or rate limits. '
+                'Try again in a few minutes. If nothing ever works, check your internet connection.'
+            )
         else:
             static = compute_static(df, fund_ticker)
             st.subheader('Static Exposures (full-sample)')
@@ -227,12 +210,10 @@ if st.button('Run Analysis'):
                 latest = rolling.iloc[-1].round(3)
                 st.subheader('Current (Last-Month) Betas')
                 st.write(latest)
-                # Plotly version:
                 fig = plot_rolling_betas_plotly(rolling, top_n=top_n)
                 if fig:
                     st.subheader('Historical Rolling Betas (Plotly)')
                     st.plotly_chart(fig, use_container_width=True)
             else:
                 st.warning(f"Not enough data for rolling beta calculation with a {window}-month window.")
-
         st.caption('Note: If a factor data download fails, it will be omitted. Not all funds will have long history.')
