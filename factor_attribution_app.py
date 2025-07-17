@@ -4,6 +4,7 @@ import numpy as np
 import yfinance as yf
 import warnings
 import plotly.express as px
+import time
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -46,28 +47,44 @@ factor_cols = [
 
 # ─── HELPERS ─────────────────────
 
-def download_prices(tickers):
+def download_prices(tickers, max_tries=2):
     dfs = []
     for t in tickers:
-        try:
-            df = yf.download(t, start=START, auto_adjust=False, progress=False)
-            if df.empty:
-                print(f'Warning: No data for {t}')
-                continue
-            col = 'Adj Close' if 'Adj Close' in df.columns else 'Close'
-            frame = df[[col]].rename(columns={col: t})
-            dfs.append(frame)
-        except Exception as e:
-            print(f'Error downloading {t}: {e}')
+        for attempt in range(max_tries):
+            try:
+                df = yf.download(t, start=START, auto_adjust=False, progress=False)
+                if not df.empty:
+                    col = 'Adj Close' if 'Adj Close' in df.columns else 'Close'
+                    # yfinance index is usually Date or DatetimeIndex
+                    frame = df[[col]].rename(columns={col: t})
+                    dfs.append(frame)
+                    break
+                else:
+                    print(f'Warning: No data for {t} (Attempt {attempt+1})')
+            except Exception as e:
+                print(f'Error downloading {t} (Attempt {attempt+1}): {e}')
+            time.sleep(1)
     if not dfs:
-        return pd.DataFrame()
+        print('All ticker downloads failed! Check your internet, firewall, or API limits.')
+        # Empty DataFrame with DatetimeIndex to avoid .resample errors
+        return pd.DataFrame(index=pd.to_datetime([]))
     prices = pd.concat(dfs, axis=1)
+    if not isinstance(prices.index, pd.DatetimeIndex):
+        try:
+            prices.index = pd.to_datetime(prices.index)
+        except Exception as e:
+            print("Error converting index to DatetimeIndex:", e)
+            # Resample will still break, but at least you get a clear message
     prices = prices.loc[:, ~prices.columns.duplicated()]
     prices.columns.name = None
     return prices
 
 def prepare_factors():
-    price_df = download_prices(factor_tickers).resample('MS').last()
+    price_df = download_prices(factor_tickers)
+    # If prices are empty or index is not datetime, stop here
+    if price_df.empty or not isinstance(price_df.index, pd.DatetimeIndex):
+        return pd.DataFrame()
+    price_df = price_df.resample('MS').last()
     today = pd.Timestamp.today().normalize()
     price_df = price_df[price_df.index < today.replace(day=1)]
     raw_rets = price_df.pct_change().dropna()
@@ -107,29 +124,33 @@ def get_rf(index):
         rf = pd.Series(0.0, index=index, name='RF')
     return rf
 
+def download_fund_prices(fund_tickers):
+    fund_prices = download_prices(fund_tickers)
+    # If download failed or date index is not DateTime, stop here
+    if fund_prices.empty or not isinstance(fund_prices.index, pd.DatetimeIndex):
+        return pd.DataFrame()
+    return fund_prices
+
 def load_and_merge_all_data(fund_tickers):
     factors = prepare_factors()
     if factors.empty:
         return None
     rf = get_rf(factors.index)
-    fund_prices = download_prices(fund_tickers).resample('MS').last()
+    fund_prices = download_fund_prices(fund_tickers)
+    if fund_prices.empty:
+        return None
+    fund_prices = fund_prices.resample('MS').last()
     today = pd.Timestamp.today().normalize()
     fund_prices = fund_prices[fund_prices.index < today.replace(day=1)]
     fund_rets = fund_prices.pct_change().dropna()
     if fund_rets.empty:
         return None
     df = fund_rets.join(factors, how='outer').ffill().dropna()
+    # Edge case: indexes may not overlap—ensure merging is robust
     rf_aligned = rf.reindex(df.index, method='ffill').astype(float)
     for fund in fund_rets.columns:
         df[f'{fund}_Excess'] = df[fund] - rf_aligned
     return df
-
-def run_ols_np(X, y):
-    X = np.asarray(X)
-    y = np.asarray(y)
-    X = np.column_stack((np.ones(X.shape[0]), X))
-    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
-    return coef
 
 def compute_static(df, fund):
     cols = [c for c in factor_cols if c in df.columns]
@@ -191,7 +212,9 @@ if st.button('Run Analysis'):
         with st.spinner('Downloading and analyzing data...'):
             df = load_and_merge_all_data([fund_ticker])
         if df is None or df.empty or not any(f in df.columns for f in factor_cols):
-            st.error(f'No usable return or factor data for ticker {fund_ticker}.')
+            st.error(f'No usable return or factor data for ticker {fund_ticker}.\n\n'
+                     'Tip: This may be due to temporary Yahoo/yfinance outages. Try re-running in a few minutes. '
+                     'If no ETF/fund/stock tickers work, check your internet or firewall.')
         else:
             static = compute_static(df, fund_ticker)
             st.subheader('Static Exposures (full-sample)')
