@@ -63,6 +63,7 @@ def download_prices(tickers):
     if not dfs:
         return pd.DataFrame()
     prices = pd.concat(dfs, axis=1)
+    print(prices)
     prices = prices.loc[:, ~prices.columns.duplicated()]
     prices.columns.name = None
     return prices
