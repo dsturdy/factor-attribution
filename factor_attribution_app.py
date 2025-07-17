@@ -5,7 +5,7 @@ import requests
 import plotly.express as px
 
 # CONFIGURATION
-POLYGON_API_KEY = "YOUR_POLYGON_API_KEY"    # <--- PUT YOUR KEY HERE
+POLYGON_API_KEY = "MeM0QPVdJIffSg1ByX7dtrTC6Lmf6aen"   
 POLYGON_BASE = "https://api.polygon.io"
 
 START = "1990-01-01"  # Polygon starts ~1992-2000 for most assets
