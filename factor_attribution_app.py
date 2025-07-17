@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import yfinance as yf
+from alpha_vantage.timeseries import TimeSeries
 import plotly.express as px
 import warnings
 import time
@@ -10,6 +10,8 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # ─── CONFIG ─────────────────────
 START = '1990-01-01'
+ALPHA_VANTAGE_API_KEY = '6FQ98LZHTWIN2CP6'  
+
 factor_tickers = [
     'SPY', 'TLT', 'HYG', 'DBC', 'EEM', 'UUP', 'TIP',
     'SVXY', 'SHY', 'CWY', 'USMV', 'MTUM', 'QUAL', 'IVE', 'IWM', 'ACWI',
@@ -33,39 +35,57 @@ factor_cols = [
 
 # ─── HELPERS ─────────────────────
 
-def download_prices(tickers, max_tries=2):
+def download_prices_alpha_vantage(tickers):
+    ts = TimeSeries(key=ALPHA_VANTAGE_API_KEY, output_format='pandas', indexing_type='date')
     dfs = []
     for t in tickers:
-        for attempt in range(max_tries):
-            try:
-                df = yf.download(t, start=START, auto_adjust=False, progress=False)
-                if not df.empty:
-                    col = 'Adj Close' if 'Adj Close' in df.columns else 'Close'
-                    frame = df[[col]].rename(columns={col: t})
-                    dfs.append(frame)
-                    break
-                else:
-                    print(f'Warning: No data for {t} (Attempt {attempt+1})')
-            except Exception as e:
-                print(f'Error downloading {t} (Attempt {attempt+1}): {e}')
-            time.sleep(1)
-    if not dfs:
-        print('All ticker downloads failed! Check your internet, firewall, or API limits.')
-        # Ensure DatetimeIndex to avoid .resample error
-        return pd.DataFrame(index=pd.to_datetime([]))
-    prices = pd.concat(dfs, axis=1)
-    if not isinstance(prices.index, pd.DatetimeIndex):
         try:
-            prices.index = pd.to_datetime(prices.index)
+            # 'outputsize' can be 'compact' or 'full': full is slower
+            data, meta = ts.get_daily_adjusted(symbol=t, outputsize='full')
+            if not data.empty:
+                price = data[['5. adjusted close']].rename(columns={'5. adjusted close': t})
+                dfs.append(price)
+            else:
+                print(f'No data for {t}')
         except Exception as e:
-            print("Error converting index to DatetimeIndex:", e)
-    prices = prices.loc[:, ~prices.columns.duplicated()]
-    prices.columns.name = None
-    return prices
+            print(f'Alpha Vantage error for {t}: {e}')
+        time.sleep(12)  # AV limit: 5 requests/minute. Don't decrease!
+    if not dfs:
+        return pd.DataFrame(index=pd.to_datetime([]))
+    df = pd.concat(dfs, axis=1)
+    df.index = pd.to_datetime(df.index)
+    return df.sort_index()
 
-def prepare_factors():
-    price_df = download_prices(factor_tickers)
-    # Abort if data is empty or no dates
+def download_prices_csv(uploaded_files):
+    # For user-uploaded price CSV files
+    dfs = []
+    for uploaded_file in uploaded_files:
+        df = pd.read_csv(uploaded_file)
+        # Try to parse date column
+        for date_col in ('date', 'Date', 'DATE'):
+            if date_col in df.columns:
+                df[date_col] = pd.to_datetime(df[date_col])
+                df = df.set_index(date_col)
+                break
+        # Guess ticker name from filename or column
+        if 'Adj Close' in df.columns:
+            col = 'Adj Close'
+        elif 'adjusted_close' in df.columns:
+            col = 'adjusted_close'
+        elif df.columns[-1] != 'Volume':
+            col = df.columns[-1]
+        else:
+            col = df.columns[1]
+        ticker = uploaded_file.name.split('.')[0].upper()
+        dfs.append(df[[col]].rename(columns={col: ticker}))
+    if not dfs:
+        return pd.DataFrame(index=pd.to_datetime([]))
+    df = pd.concat(dfs, axis=1)
+    df.index = pd.to_datetime(df.index)
+    return df.sort_index()
+
+def prepare_factors(prices_func, csv_files=None):
+    price_df = prices_func(factor_tickers) if csv_files is None else download_prices_csv(csv_files)
     if price_df.empty or not isinstance(price_df.index, pd.DatetimeIndex):
         return pd.DataFrame()
     price_df = price_df.resample('MS').last()
@@ -100,26 +120,19 @@ def prepare_factors():
     return f[available]
 
 def get_rf(index):
-    try:
-        rf_raw = yf.download('^IRX', start=START, progress=False)['Close']
-        rf = rf_raw / 1200
-        rf = rf.reindex(index, method='ffill').fillna(0)
-    except:
-        rf = pd.Series(0.0, index=index, name='RF')
-    return rf
+    # For simplicity, use 1-month T-Bill from Alpha Vantage or set RF=0 for demo
+    # Alpha Vantage doesn't have treasury data—use 0 as fallback
+    return pd.Series(0.0, index=index, name='RF')
 
-def download_fund_prices(fund_tickers):
-    fund_prices = download_prices(fund_tickers)
-    if fund_prices.empty or not isinstance(fund_prices.index, pd.DatetimeIndex):
-        return pd.DataFrame()
-    return fund_prices
+def download_fund_prices_alpha_vantage(fund_tickers):
+    return download_prices_alpha_vantage(fund_tickers)
 
-def load_and_merge_all_data(fund_tickers):
-    factors = prepare_factors()
+def load_and_merge_all_data(fund_tickers, prices_func, fund_csv=None, factors_csv=None):
+    factors = prepare_factors(prices_func, factors_csv)
     if factors.empty:
         return None
     rf = get_rf(factors.index)
-    fund_prices = download_fund_prices(fund_tickers)
+    fund_prices = prices_func(fund_tickers) if fund_csv is None else download_prices_csv(fund_csv)
     if fund_prices.empty:
         return None
     fund_prices = fund_prices.resample('MS').last()
@@ -155,7 +168,7 @@ def compute_rolling(df, fund, window=36):
         X_win = df_fund[cols].iloc[i-window+1:i+1].values
         X_win_ = np.column_stack([np.ones(X_win.shape[0]), X_win])
         coef, _, _, _ = np.linalg.lstsq(X_win_, y_win, rcond=None)
-        betas.append(coef[1:])  # exclude intercept
+        betas.append(coef[1:])
         dates.append(df_fund.index[i])
     return pd.DataFrame(betas, index=dates, columns=cols)
 
@@ -177,26 +190,31 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
 
 # ─── STREAMLIT UI ──────────────────────────
 
-st.title('Multi‑Factor Exposures Dashboard')
-st.markdown("""
-Analyze rolling and static multi-factor exposures for any mutual fund, ETF, or index with a ticker. 
-Enter the fund ticker below, select your rolling window, and click "Run Analysis".
-""")
-fund_ticker = st.text_input('Fund ticker (e.g. SGIIX)', value='SGIIX')
-window = st.slider('Rolling window (months)', min_value=12, max_value=60, value=36, step=6)
-top_n = st.slider('Max betas to plot (plotly)', 2, 10, 5)
+st.title('Multi‑Factor Exposures Dashboard (Alpha Vantage Version)')
 
-if st.button('Run Analysis'):
-    if not fund_ticker:
-        st.error('Please enter a fund ticker.')
-    else:
-        with st.spinner('Downloading and analyzing data...'):
-            df = load_and_merge_all_data([fund_ticker])
+st.markdown("""
+Analyze rolling and static multi-factor exposures for any stock or ETF ticker (Alpha Vantage powered).
+For mutual funds (e.g. 'SGIIX'), upload a CSV file downloaded from Yahoo or the fund manager's site.<br>
+**Note:** Alpha Vantage does **not** support most mutual fund tickers. For funds, use the CSV uploader below.
+""", unsafe_allow_html=True)
+
+tab1, tab2 = st.tabs(["Live Data (stocks & ETFs)", "CSV Upload (funds or custom)"])
+
+with tab1:
+    fund_ticker = st.text_input('Stock or ETF ticker (e.g. SPY, AAPL, VOO)', value='SPY')
+    window = st.slider('Rolling window (months)', min_value=12, max_value=60, value=36, step=6)
+    top_n = st.slider('Max betas to plot (plotly)', 2, 10, 5)
+
+    if st.button('Run Analysis (Live)', key='run_live'):
+        with st.spinner('Downloading and analyzing live Alpha Vantage data...'):
+            df = load_and_merge_all_data(
+                [fund_ticker],
+                download_prices_alpha_vantage
+            )
         if df is None or df.empty or not any(f in df.columns for f in factor_cols):
             st.error(
                 f'No usable return or factor data for ticker {fund_ticker}. \n\n'
-                'This is often due to temporary Yahoo/yfinance API outages or rate limits. '
-                'Try again in a few minutes. If nothing ever works, check your internet connection.'
+                'If a mutual fund, try the "CSV Upload" tab below. For stocks/ETFs, verify symbol or try again in a few moments. '
             )
         else:
             static = compute_static(df, fund_ticker)
@@ -216,4 +234,55 @@ if st.button('Run Analysis'):
                     st.plotly_chart(fig, use_container_width=True)
             else:
                 st.warning(f"Not enough data for rolling beta calculation with a {window}-month window.")
-        st.caption('Note: If a factor data download fails, it will be omitted. Not all funds will have long history.')
+        st.caption('Factor data comes from Alpha Vantage API. Some tickers may not be supported. Try the CSV tab for custom datasets.')
+
+with tab2:
+    st.write("**Upload CSV(s) for the fund/asset and optionally for factors.**")
+    fund_files = st.file_uploader(
+        "Upload CSV(s) for one or more fund price histories (NAV/price, must have a date column).", 
+        accept_multiple_files=True,
+        key='fund_csv'
+    )
+    factor_files = st.file_uploader(
+        "Upload optional custom CSV(s) for factors (leave blank to use Alpha Vantage factor data).", 
+        accept_multiple_files=True,
+        key='factor_csv'
+    )
+    fund_name = st.text_input('Fund ticker or custom name (matches your fund CSV column)', value='SGIIX', key='csv_fund_name')
+    window2 = st.slider('Rolling window (months)', min_value=12, max_value=60, value=36, step=6, key='csv_window')
+    top_n2 = st.slider('Max betas to plot (plotly)', 2, 10, 5, key='csv_topn')
+
+    if st.button('Run Analysis (CSV)', key='run_csv'):
+        if not fund_files:
+            st.error('Upload at least one CSV file for the fund/asset.')
+        else:
+            with st.spinner('Analyzing uploaded CSV data...'):
+                def csv_factors_func(tickers):
+                    return prepare_factors(download_prices_csv, factor_files) if factor_files else prepare_factors(download_prices_alpha_vantage)
+                df = load_and_merge_all_data(
+                    [fund_name],
+                    download_prices_csv,
+                    fund_csv=fund_files,
+                    factors_csv=factor_files if factor_files else None,
+                )
+            if df is None or df.empty or not any(f in df.columns for f in factor_cols):
+                st.error(f'No usable return or factor data for asset name {fund_name} in uploaded CSV(s).')
+            else:
+                static = compute_static(df, fund_name)
+                st.subheader('Static Exposures (full-sample)')
+                st.table(static.to_frame(name='β'))
+
+                rolling = compute_rolling(df, fund_name, window=window2)
+                if not rolling.empty:
+                    st.subheader(f'{window2}-Month Rolling Betas (Streamlit)')
+                    st.line_chart(rolling)
+                    latest = rolling.iloc[-1].round(3)
+                    st.subheader('Current (Last-Month) Betas')
+                    st.write(latest)
+                    fig = plot_rolling_betas_plotly(rolling, top_n=top_n2)
+                    if fig:
+                        st.subheader('Historical Rolling Betas (Plotly)')
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning(f"Not enough data in upload for rolling beta calculation with a {window2}-month window.")
+        st.caption('Upload one or more CSVs for custom funds or factors. Format: date,NAV/price/ad close... with a date column.')
