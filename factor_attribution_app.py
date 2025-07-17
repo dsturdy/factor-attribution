@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import statsmodels.api as sm
 import warnings
 import matplotlib.pyplot as plt
 
@@ -46,7 +45,6 @@ factor_cols = [
 ]
 
 # ─── HELPERS ─────────────────────
-
 def download_prices(tickers):
     dfs = []
     for t in tickers:
@@ -63,7 +61,6 @@ def download_prices(tickers):
     if not dfs:
         return pd.DataFrame()
     prices = pd.concat(dfs, axis=1)
-    print(prices)
     prices = prices.loc[:, ~prices.columns.duplicated()]
     prices.columns.name = None
     return prices
@@ -131,31 +128,43 @@ def load_and_merge_all_data(fund_tickers):
         df[f'{fund}_Excess'] = df[fund] - rf_aligned
     return df
 
+# --- OLS using numpy (no scipy/statsmodels) ---
+def run_ols_np(X, y):
+    X = np.asarray(X)
+    y = np.asarray(y)
+    # Add intercept
+    X = np.column_stack((np.ones(X.shape[0]), X))
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+    names = ['const'] + list(getattr(X, 'columns', []))
+    return coef
+
 def compute_static(df, fund):
-    X = sm.add_constant(df[[col for col in factor_cols if col in df.columns]])
-    y = df[f'{fund}_Excess']
-    m = sm.OLS(y, X).fit()
-    return m.params.round(3)
+    cols = [c for c in factor_cols if c in df.columns]
+    X = df[cols].values
+    y = df[f'{fund}_Excess'].values
+    # Add intercept
+    X_ = np.column_stack([np.ones(X.shape[0]), X])
+    coef, _, _, _ = np.linalg.lstsq(X_, y, rcond=None)
+    return pd.Series(coef[1:], index=cols).round(3)
 
 def compute_rolling(df, fund, window=36):
-    cols = [f'{fund}_Excess'] + [col for col in factor_cols if col in df.columns]
-    df_fund = df[cols].dropna()
+    cols = [c for c in factor_cols if c in df.columns]
+    df_fund = df[[f'{fund}_Excess'] + cols].dropna()
+    if len(df_fund) < window:
+        return pd.DataFrame()
     betas, dates = [], []
-    these_factors = [col for col in factor_cols if col in df_fund.columns]
     for i in range(window - 1, len(df_fund)):
-        y_win = df_fund[f'{fund}_Excess'].iloc[i-window+1:i+1]
-        X_win = sm.add_constant(df_fund[these_factors].iloc[i-window+1:i+1])
-        m = sm.OLS(y_win, X_win).fit()
-        betas.append(m.params.values)
+        y_win = df_fund[f'{fund}_Excess'].iloc[i-window+1:i+1].values
+        X_win = df_fund[cols].iloc[i-window+1:i+1].values
+        X_win_ = np.column_stack([np.ones(X_win.shape[0]), X_win])
+        coef, _, _, _ = np.linalg.lstsq(X_win_, y_win, rcond=None)
+        betas.append(coef[1:])  # exclude intercept
         dates.append(df_fund.index[i])
-    cols_out = ['const'] + these_factors
-    roll = pd.DataFrame(betas, index=dates, columns=cols_out)
-    return roll.drop(columns=['const']) if not roll.empty else roll
+    return pd.DataFrame(betas, index=dates, columns=cols)
 
 def plot_rolling_betas(rolling, top_n=5):
     if rolling.empty:
         return None
-    # Choose the top N most variable betas (using stddev for significance)
     stddevs = rolling.std().sort_values(ascending=False)
     plot_factors = stddevs.head(top_n).index.tolist()
     fig, ax = plt.subplots(figsize=(10, 6))
