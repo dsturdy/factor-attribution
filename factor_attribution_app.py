@@ -2,14 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from curl_cffi import requests  # << THE ANTI-RATELIMIT HACK
 import warnings
 import plotly.express as px
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-# === Impersonate Chrome for all Yahoo calls ===
-session = requests.Session(impersonate="chrome")
 
 # ─── CONFIG ─────────────────────
 START = '1990-01-01'
@@ -54,28 +50,22 @@ def download_prices(tickers):
     dfs = []
     for t in tickers:
         try:
-            df = yf.download(
-                t, start=START, auto_adjust=False, progress=False, session=session
-            )
+            df = yf.download(t, start=START, auto_adjust=False, progress=False)
             if df.empty:
                 print(f'Warning: No data for {t}')
-                st.warning(f"[yfinance] No data for {t}. You may still be rate limited.", icon="⚠️")
                 continue
             col = 'Adj Close' if 'Adj Close' in df.columns else 'Close'
             frame = df[[col]].rename(columns={col: t})
             dfs.append(frame)
-            print(f'[OK] Downloaded {t}, {len(df)} rows.')
         except Exception as e:
             print(f'Error downloading {t}: {e}')
-            st.error(f"Error downloading {t}: {e}")
     if not dfs:
-        err = "All ticker downloads failed! Are you being rate limited by Yahoo? Try again later."
-        print(err)
-        st.error(err, icon="🚫")
         return pd.DataFrame()
     prices = pd.concat(dfs, axis=1)
     prices = prices.loc[:, ~prices.columns.duplicated()]
     prices.columns.name = None
+
+    # FIX: Ensure index is DatetimeIndex before returning
     if not isinstance(prices.index, pd.DatetimeIndex):
         try:
             prices.index = pd.to_datetime(prices.index)
@@ -85,8 +75,8 @@ def download_prices(tickers):
     return prices
 
 def prepare_factors():
-    st.info("Downloading factor history from yfinance...", icon="🕑")
     price_df = download_prices(factor_tickers)
+    # FIX: Double-check index here too
     if not isinstance(price_df.index, pd.DatetimeIndex):
         try:
             price_df.index = pd.to_datetime(price_df.index)
@@ -99,22 +89,25 @@ def prepare_factors():
     price_df = price_df[price_df.index < today.replace(day=1)]
     raw_rets = price_df.pct_change().dropna()
     f = raw_rets.rename(columns=rename_map)
-    # Local Equity, etc.
+    # Local Equity
     if ('Equity' in f.columns) and ('ACWI' in raw_rets.columns):
         eq, acwi = f['Equity'].align(raw_rets['ACWI'], join='inner')
         f.loc[eq.index, 'Local Equity'] = eq - acwi
     else:
         f['Local Equity'] = pd.NA
+    # Local Inflation
     if ('TIP' in raw_rets.columns) and ('TLT' in raw_rets.columns):
         tip, tlt = raw_rets['TIP'].align(raw_rets['TLT'], join='inner')
         f.loc[tip.index, 'Local Inflation'] = tip - tlt
     else:
         f['Local Inflation'] = pd.NA
+    # FI Carry
     if ('TLT' in raw_rets.columns) and ('SHY' in raw_rets.columns):
         tlt, shy = raw_rets['TLT'].align(raw_rets['SHY'], join='inner')
         f.loc[tlt.index, 'FI Carry'] = tlt - shy
     else:
         f['FI Carry'] = pd.NA
+    # Trend (12M change in SPY)
     if 'SPY' in price_df.columns:
         f['Trend'] = price_df['SPY'].pct_change(12)
     else:
@@ -124,7 +117,7 @@ def prepare_factors():
 
 def get_rf(index):
     try:
-        rf_raw = yf.download('^IRX', start=START, progress=False, session=session)['Close']
+        rf_raw = yf.download('^IRX', start=START, progress=False)['Close']
         rf = rf_raw / 1200
         rf = rf.reindex(index, method='ffill').fillna(0)
     except Exception as e:
@@ -138,6 +131,7 @@ def load_and_merge_all_data(fund_tickers):
         return None
     rf = get_rf(factors.index)
     fund_prices = download_prices(fund_tickers)
+    # FIX: Ensure datetime index before resampling
     if not isinstance(fund_prices.index, pd.DatetimeIndex):
         try:
             fund_prices.index = pd.to_datetime(fund_prices.index)
@@ -201,11 +195,10 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
 st.title('Multi‑Factor Exposures Dashboard')
 
 st.markdown("""
-Analyze rolling and static multi-factor exposures for any mutual fund, ETF, or index with a ticker.
-*Now uses Chrome-impersonation to minimize Yahoo Finance rate limiting.*
+Analyze rolling and static multi-factor exposures for any mutual fund, ETF, or index with a ticker. Enter the fund ticker below, select your rolling window, and click "Run Analysis".
 """)
 
-fund_ticker = st.text_input('Fund ticker (e.g. SGIIX, SPY)', value='SGIIX')
+fund_ticker = st.text_input('Fund ticker (e.g. SGIIX)', value='SGIIX')
 window = st.slider('Rolling window (months)', min_value=12, max_value=60, value=36, step=6)
 top_n = st.slider('Max betas to plot (plotly)', 2, 10, 5)
 
@@ -238,4 +231,3 @@ if st.button('Run Analysis'):
                 st.warning(f"Not enough data for rolling beta calculation with a {window}-month window.")
 
         st.caption('Note: If a factor data download fails, it will be omitted. Not all funds will have long history.')
-
