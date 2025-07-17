@@ -1,26 +1,24 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from alpha_vantage.timeseries import TimeSeries
+import requests
 import plotly.express as px
-import warnings
-import time
 
-warnings.simplefilter(action='ignore', category=FutureWarning)
+# CONFIGURATION
+POLYGON_API_KEY = "YOUR_POLYGON_API_KEY"    # <--- PUT YOUR KEY HERE
+POLYGON_BASE = "https://api.polygon.io"
 
-# ─── CONFIG ─────────────────────
-START = '1990-01-01'
-ALPHA_VANTAGE_API_KEY = '6FQ98LZHTWIN2CP6'  
+START = "1990-01-01"  # Polygon starts ~1992-2000 for most assets
 
 factor_tickers = [
     'SPY', 'TLT', 'HYG', 'DBC', 'EEM', 'UUP', 'TIP',
-    'SVXY', 'SHY', 'CWY', 'USMV', 'MTUM', 'QUAL', 'IVE', 'IWM', 'ACWI',
+    'SVXY', 'SHY', 'USMV', 'MTUM', 'QUAL', 'IVE', 'IWM', 'ACWI',
     'GLD', 'USO', 'VIXY'
 ]
 rename_map = {
     'SPY': 'Equity',        'TLT': 'Interest Rates',    'HYG': 'Credit',
     'DBC': 'Commodities',   'EEM': 'Emerging Markets',  'UUP': 'FX',
-    'TIP': 'Real Yields',   'SVXY': 'Equity Short Vol', 'CWY': 'FX Carry',
+    'TIP': 'Real Yields',   'SVXY': 'Equity Short Vol',
     'USMV': 'Low Risk',     'MTUM': 'Momentum',         'QUAL': 'Quality',
     'IVE': 'Value',         'IWM': 'Small Cap',         'GLD': 'Gold',
     'USO': 'Oil',           'VIXY': 'Volatility'
@@ -33,59 +31,45 @@ factor_cols = [
     'Gold', 'Oil', 'Volatility'
 ]
 
-# ─── HELPERS ─────────────────────
+# -- POLYGON DATA DOWNLOADER --
+def polygon_fetch_daily(ticker, apikey, from_date=START, to_date=None):
+    url = f"{POLYGON_BASE}/v2/aggs/ticker/{ticker}/range/1/day/{from_date}/{to_date or pd.Timestamp.today().strftime('%Y-%m-%d')}"
+    params = dict(adjusted='true', sort='asc', apiKey=apikey, limit=50000)
+    r = requests.get(url, params=params)
+    r.raise_for_status()
+    data = r.json()
+    if "results" not in data or not data["results"]:
+        return pd.DataFrame()
+    df = pd.DataFrame(data["results"])
+    df['date'] = pd.to_datetime(df['t'], unit='ms')
+    df = df.set_index('date')
+    df = df[["c"]].rename(columns={'c': ticker})  # c = close price
+    return df
 
-def download_prices_alpha_vantage(tickers):
-    ts = TimeSeries(key=ALPHA_VANTAGE_API_KEY, output_format='pandas', indexing_type='date')
+def download_prices_polygon(tickers):
     dfs = []
     for t in tickers:
+        # For mutual funds, Polygon uses A:SGIIX, etc.
+        actual_ticker = t
+        if len(t) > 5 and not t.startswith("A:"):
+            actual_ticker = "A:"+t.upper()
         try:
-            # 'outputsize' can be 'compact' or 'full': full is slower
-            data, meta = ts.get_daily_adjusted(symbol=t, outputsize='full')
-            if not data.empty:
-                price = data[['5. adjusted close']].rename(columns={'5. adjusted close': t})
-                dfs.append(price)
+            df = polygon_fetch_daily(actual_ticker, POLYGON_API_KEY, from_date=START)
+            if not df.empty:
+                dfs.append(df)
             else:
-                print(f'No data for {t}')
+                print(f"Polygon: No data for {actual_ticker}")
         except Exception as e:
-            print(f'Alpha Vantage error for {t}: {e}')
-        time.sleep(2)  # AV limit: 5 requests/minute. Don't decrease!
+            print(f"Polygon error {actual_ticker}: {e}")
     if not dfs:
-        return pd.DataFrame(index=pd.to_datetime([]))
-    df = pd.concat(dfs, axis=1)
-    df.index = pd.to_datetime(df.index)
-    return df.sort_index()
+        return pd.DataFrame()
+    result = pd.concat(dfs, axis=1)
+    result.index = pd.to_datetime(result.index)
+    result = result[~result.index.duplicated()]
+    return result.sort_index()
 
-def download_prices_csv(uploaded_files):
-    # For user-uploaded price CSV files
-    dfs = []
-    for uploaded_file in uploaded_files:
-        df = pd.read_csv(uploaded_file)
-        # Try to parse date column
-        for date_col in ('date', 'Date', 'DATE'):
-            if date_col in df.columns:
-                df[date_col] = pd.to_datetime(df[date_col])
-                df = df.set_index(date_col)
-                break
-        # Guess ticker name from filename or column
-        if 'Adj Close' in df.columns:
-            col = 'Adj Close'
-        elif 'adjusted_close' in df.columns:
-            col = 'adjusted_close'
-        elif df.columns[-1] != 'Volume':
-            col = df.columns[-1]
-        else:
-            col = df.columns[1]
-        ticker = uploaded_file.name.split('.')[0].upper()
-        dfs.append(df[[col]].rename(columns={col: ticker}))
-    if not dfs:
-        return pd.DataFrame(index=pd.to_datetime([]))
-    df = pd.concat(dfs, axis=1)
-    df.index = pd.to_datetime(df.index)
-    return df.sort_index()
-
-def prepare_factors(prices_func, csv_files=None):
-    price_df = prices_func(factor_tickers) if csv_files is None else download_prices_csv(csv_files)
+def prepare_factors():
+    price_df = download_prices_polygon(factor_tickers)
     if price_df.empty or not isinstance(price_df.index, pd.DatetimeIndex):
         return pd.DataFrame()
     price_df = price_df.resample('MS').last()
@@ -112,7 +96,7 @@ def prepare_factors(prices_func, csv_files=None):
     else:
         f['FI Carry'] = pd.NA
     # Trend
-    if 'SPY' in price_df.columns:
+    if 'Equity' in f.columns and 'SPY' in price_df.columns:
         f['Trend'] = price_df['SPY'].pct_change(12)
     else:
         f['Trend'] = pd.NA
@@ -120,19 +104,18 @@ def prepare_factors(prices_func, csv_files=None):
     return f[available]
 
 def get_rf(index):
-    # For simplicity, use 1-month T-Bill from Alpha Vantage or set RF=0 for demo
-    # Alpha Vantage doesn't have treasury data—use 0 as fallback
+    # Polygon does not serve T-bill rates; set rf = 0 for simplicity
     return pd.Series(0.0, index=index, name='RF')
 
-def download_fund_prices_alpha_vantage(fund_tickers):
-    return download_prices_alpha_vantage(fund_tickers)
+def download_fund_prices_polygon(fund_tickers):
+    return download_prices_polygon(fund_tickers)
 
-def load_and_merge_all_data(fund_tickers, prices_func, fund_csv=None, factors_csv=None):
-    factors = prepare_factors(prices_func, factors_csv)
+def load_and_merge_all_data(fund_tickers):
+    factors = prepare_factors()
     if factors.empty:
         return None
     rf = get_rf(factors.index)
-    fund_prices = prices_func(fund_tickers) if fund_csv is None else download_prices_csv(fund_csv)
+    fund_prices = download_fund_prices_polygon(fund_tickers)
     if fund_prices.empty:
         return None
     fund_prices = fund_prices.resample('MS').last()
@@ -188,33 +171,28 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
     fig.update_layout(legend=dict(orientation="h", y=-0.2))
     return fig
 
-# ─── STREAMLIT UI ──────────────────────────
-
-st.title('Multi‑Factor Exposures Dashboard (Alpha Vantage Version)')
+# STREAMLIT UI
+st.title('Multi‑Factor Exposures Dashboard (Polygon API)')
 
 st.markdown("""
-Analyze rolling and static multi-factor exposures for any stock or ETF ticker (Alpha Vantage powered).
-For mutual funds (e.g. 'SGIIX'), upload a CSV file downloaded from Yahoo or the fund manager's site.<br>
-**Note:** Alpha Vantage does **not** support most mutual fund tickers. For funds, use the CSV uploader below.
-""", unsafe_allow_html=True)
+Analyze rolling and static multi-factor exposures for **any US stock, ETF, or supported mutual fund (A:SGIIX, etc.)** with a ticker. 
+Enter e.g. "SPY" for S&P 500 ETF or "A:SGIIX" for funds. For funds not on Polygon, use the CSV upload tab in the future.
+""")
 
-tab1, tab2 = st.tabs(["Live Data (stocks & ETFs)", "CSV Upload (funds or custom)"])
+fund_ticker = st.text_input('Fund/ETF/stock ticker (use "A:SGIIX" for some funds)', value='SPY')
+window = st.slider('Rolling window (months)', min_value=12, max_value=60, value=36, step=6)
+top_n = st.slider('Max betas to plot (plotly)', 2, 10, 5)
 
-with tab1:
-    fund_ticker = st.text_input('Stock or ETF ticker (e.g. SPY, AAPL, VOO)', value='SPY')
-    window = st.slider('Rolling window (months)', min_value=12, max_value=60, value=36, step=6)
-    top_n = st.slider('Max betas to plot (plotly)', 2, 10, 5)
-
-    if st.button('Run Analysis (Live)', key='run_live'):
-        with st.spinner('Downloading and analyzing live Alpha Vantage data...'):
-            df = load_and_merge_all_data(
-                [fund_ticker],
-                download_prices_alpha_vantage
-            )
+if st.button('Run Analysis'):
+    if not fund_ticker:
+        st.error('Please enter a fund ticker.')
+    else:
+        with st.spinner('Downloading Polygon.io price data and analyzing...'):
+            df = load_and_merge_all_data([fund_ticker])
         if df is None or df.empty or not any(f in df.columns for f in factor_cols):
             st.error(
-                f'No usable return or factor data for ticker {fund_ticker}. \n\n'
-                'If a mutual fund, try the "CSV Upload" tab below. For stocks/ETFs, verify symbol or try again in a few moments. '
+                f'No usable return or factor data for ticker {fund_ticker} (Polygon.io). \n\n'
+                'Try a valid US stock/ETF or Polygon-supported fund (A:SGIIX etc.).'
             )
         else:
             static = compute_static(df, fund_ticker)
@@ -234,55 +212,6 @@ with tab1:
                     st.plotly_chart(fig, use_container_width=True)
             else:
                 st.warning(f"Not enough data for rolling beta calculation with a {window}-month window.")
-        st.caption('Factor data comes from Alpha Vantage API. Some tickers may not be supported. Try the CSV tab for custom datasets.')
+        st.caption('Powered by Polygon.io. If a factor download fails, it is skipped. Mutual funds must use "A:<ticker>" format.')
 
-with tab2:
-    st.write("**Upload CSV(s) for the fund/asset and optionally for factors.**")
-    fund_files = st.file_uploader(
-        "Upload CSV(s) for one or more fund price histories (NAV/price, must have a date column).", 
-        accept_multiple_files=True,
-        key='fund_csv'
-    )
-    factor_files = st.file_uploader(
-        "Upload optional custom CSV(s) for factors (leave blank to use Alpha Vantage factor data).", 
-        accept_multiple_files=True,
-        key='factor_csv'
-    )
-    fund_name = st.text_input('Fund ticker or custom name (matches your fund CSV column)', value='SGIIX', key='csv_fund_name')
-    window2 = st.slider('Rolling window (months)', min_value=12, max_value=60, value=36, step=6, key='csv_window')
-    top_n2 = st.slider('Max betas to plot (plotly)', 2, 10, 5, key='csv_topn')
-
-    if st.button('Run Analysis (CSV)', key='run_csv'):
-        if not fund_files:
-            st.error('Upload at least one CSV file for the fund/asset.')
-        else:
-            with st.spinner('Analyzing uploaded CSV data...'):
-                def csv_factors_func(tickers):
-                    return prepare_factors(download_prices_csv, factor_files) if factor_files else prepare_factors(download_prices_alpha_vantage)
-                df = load_and_merge_all_data(
-                    [fund_name],
-                    download_prices_csv,
-                    fund_csv=fund_files,
-                    factors_csv=factor_files if factor_files else None,
-                )
-            if df is None or df.empty or not any(f in df.columns for f in factor_cols):
-                st.error(f'No usable return or factor data for asset name {fund_name} in uploaded CSV(s).')
-            else:
-                static = compute_static(df, fund_name)
-                st.subheader('Static Exposures (full-sample)')
-                st.table(static.to_frame(name='β'))
-
-                rolling = compute_rolling(df, fund_name, window=window2)
-                if not rolling.empty:
-                    st.subheader(f'{window2}-Month Rolling Betas (Streamlit)')
-                    st.line_chart(rolling)
-                    latest = rolling.iloc[-1].round(3)
-                    st.subheader('Current (Last-Month) Betas')
-                    st.write(latest)
-                    fig = plot_rolling_betas_plotly(rolling, top_n=top_n2)
-                    if fig:
-                        st.subheader('Historical Rolling Betas (Plotly)')
-                        st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning(f"Not enough data in upload for rolling beta calculation with a {window2}-month window.")
-        st.caption('Upload one or more CSVs for custom funds or factors. Format: date,NAV/price/ad close... with a date column.')
+# END OF APP
