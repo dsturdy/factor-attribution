@@ -39,14 +39,23 @@ def load_prices_from_csv(ticker):
     return df
 
 def load_yield_from_csv(ticker):
-    # expects files named "TLT_Yield.csv", "SHY_Yield.csv", etc.
     path = os.path.join(CSV_DIR, f"{ticker}_Yield.csv")
     if not os.path.exists(path):
         st.error(f"No yield CSV for {ticker} at {path}")
         return pd.Series(dtype=float)
+
     df = pd.read_csv(path, parse_dates=["Date"], index_col="Date")
-    # assume the yield column is named "Yield"
-    return df["Yield"]
+    # pick the right column name and convert percentage to decimal
+    for col in ("Yield", "Adj Close", "Close"):
+        if col in df.columns:
+            # assume values like 4.123 represent 4.123%
+            series = df[col] / 100.0
+            series.name = ticker  # optional, for clarity
+            return series
+
+    st.error(f"No valid yield column in {path}; found: {df.columns.tolist()}")
+    return pd.Series(dtype=float)
+
 
 def download_prices(tickers):
     dfs = []
