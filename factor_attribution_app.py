@@ -7,7 +7,6 @@ import plotly.express as px
 # ─── CONFIG ─────────────────────
 BASE_DIR = os.path.dirname(__file__)
 CSV_DIR  = os.path.join(BASE_DIR, "Factor_Attribution_csvs")
-START     = '1990-01-01'   # only for reference
 
 factor_tickers = [
     'SPY','TLT','HYG','DBC','EEM','UUP','TIP',
@@ -24,9 +23,9 @@ rename_map = {
 
 factor_cols = [
     'Equity','Interest Rates','Credit','Commodities','Emerging Markets','FX',
-    'Real Yields','Local Inflation','Local Equity','Equity Short Vol','FI Carry',
-    'FX Carry','Trend','Low Risk','Momentum','Quality','Value','Small Cap',
-    'Gold','Oil','Volatility'
+    'Real Yields','Local Inflation','Local Equity','Equity Short Vol',
+    'FI Carry','FX Carry','Trend','Low Risk','Momentum','Quality','Value',
+    'Small Cap','Gold','Oil','Volatility'
 ]
 
 # ─── HELPERS ─────────────────────
@@ -34,85 +33,104 @@ factor_cols = [
 def load_prices_from_csv(ticker):
     path = os.path.join(CSV_DIR, f"{ticker}.csv")
     if not os.path.exists(path):
-        st.error(f"No CSV for {ticker} at {path}")
+        st.error(f"No price CSV for {ticker} at {path}")
         return pd.DataFrame()
     df = pd.read_csv(path, parse_dates=["Date"], index_col="Date")
     return df
+
+def load_yield_from_csv(ticker):
+    # expects files named "TLT_Yield.csv", "SHY_Yield.csv", etc.
+    path = os.path.join(CSV_DIR, f"{ticker}_Yield.csv")
+    if not os.path.exists(path):
+        st.error(f"No yield CSV for {ticker} at {path}")
+        return pd.Series(dtype=float)
+    df = pd.read_csv(path, parse_dates=["Date"], index_col="Date")
+    # assume the yield column is named "Yield"
+    return df["Yield"]
 
 def download_prices(tickers):
     dfs = []
     for t in tickers:
         df = load_prices_from_csv(t)
-        if df.empty:
+        if df.empty: 
             continue
         col = "Adj Close" if "Adj Close" in df.columns else "Close"
-        frame = df[[col]].rename(columns={col: t})
-        dfs.append(frame)
+        dfs.append(df[[col]].rename(columns={col: t}))
     if not dfs:
         return pd.DataFrame()
     prices = pd.concat(dfs, axis=1)
     prices = prices.loc[:, ~prices.columns.duplicated()]
-    if not isinstance(prices.index, pd.DatetimeIndex):
-        prices.index = pd.to_datetime(prices.index)
+    prices.index = pd.to_datetime(prices.index)
     return prices
 
 def prepare_factors():
+    # load factor price returns
     price_df = download_prices(factor_tickers)
     if price_df.empty:
         return pd.DataFrame()
+    # monthly resample
     price_df = price_df.resample('MS').last()
-    cutoff = pd.Timestamp.today().normalize().replace(day=1)
+    cutoff   = pd.Timestamp.today().normalize().replace(day=1)
     price_df = price_df[price_df.index < cutoff]
     raw_rets = price_df.pct_change().dropna()
+
     f = raw_rets.rename(columns=rename_map)
+
     # Local Equity
     if 'Equity' in f and 'ACWI' in raw_rets:
         eq, acwi = f['Equity'].align(raw_rets['ACWI'], join='inner')
         f.loc[eq.index, 'Local Equity'] = eq - acwi
     else:
         f['Local Equity'] = pd.NA
+
     # Local Inflation
     if 'TIP' in raw_rets and 'TLT' in raw_rets:
         tip, tlt = raw_rets['TIP'].align(raw_rets['TLT'], join='inner')
         f.loc[tip.index, 'Local Inflation'] = tip - tlt
     else:
         f['Local Inflation'] = pd.NA
-    # FI Carry
-    if 'TLT' in raw_rets and 'SHY' in raw_rets:
-        tlt, shy = raw_rets['TLT'].align(raw_rets['SHY'], join='inner')
-        f.loc[tlt.index, 'FI Carry'] = tlt - shy
+
+    # FI Carry as yield spread
+    tlt_yield = load_yield_from_csv("TLT")
+    shy_yield = load_yield_from_csv("SHY")
+    if not tlt_yield.empty and not shy_yield.empty:
+        tlt_y, shy_y = tlt_yield.align(shy_yield, join="inner")
+        f.loc[tlt_y.index, 'FI Carry'] = tlt_y - shy_y
     else:
         f['FI Carry'] = pd.NA
-    # Trend
+
+    # Trend (12‑month SPY price return)
     if 'SPY' in price_df:
         f['Trend'] = price_df['SPY'].pct_change(12)
     else:
         f['Trend'] = pd.NA
 
+    # keep only requested columns
     return f[[c for c in factor_cols if c in f.columns]]
 
 def get_rf(index):
+    # unchanged: pulls from ^IRX CSV
     df = load_prices_from_csv("^IRX")
     if df.empty or ("Close" not in df.columns and "Adj Close" not in df.columns):
         return pd.Series(0.0, index=index, name='RF')
     col = "Adj Close" if "Adj Close" in df.columns else "Close"
     rf = df[col] / 1200
-    rf = rf.reindex(index, method='ffill').fillna(0)
-    return rf
+    return rf.reindex(index, method='ffill').fillna(0)
 
 def load_and_merge_all_data(fund_tickers):
     factors = prepare_factors()
     if factors.empty:
         return None
+
     rf = get_rf(factors.index)
 
     fund_prices = download_prices(fund_tickers)
     if fund_prices.empty:
         return None
     fund_prices = fund_prices.resample('MS').last()
-    cutoff = pd.Timestamp.today().normalize().replace(day=1)
+    cutoff      = pd.Timestamp.today().normalize().replace(day=1)
     fund_prices = fund_prices[fund_prices.index < cutoff]
-    fund_rets = fund_prices.pct_change().dropna()
+    fund_rets   = fund_prices.pct_change().dropna()
     if fund_rets.empty:
         return None
 
@@ -120,27 +138,28 @@ def load_and_merge_all_data(fund_tickers):
     rf_aligned = rf.reindex(df.index, method='ffill').astype(float)
     for fund in fund_rets.columns:
         df[f'{fund}_Excess'] = df[fund] - rf_aligned
+
     return df
 
 def compute_static(df, fund):
     cols = [c for c in factor_cols if c in df.columns]
-    X = df[cols].values
-    y = df[f'{fund}_Excess'].values
-    X_ = np.column_stack([np.ones(len(X)), X])
-    coef, *_ = np.linalg.lstsq(X_, y, rcond=None)
+    X    = df[cols].values
+    y    = df[f'{fund}_Excess'].values
+    X_   = np.column_stack([np.ones(len(X)), X])
+    coef,*_ = np.linalg.lstsq(X_, y, rcond=None)
     return pd.Series(coef[1:], index=cols).round(3)
 
 def compute_rolling(df, fund, window=36):
-    cols = [c for c in factor_cols if c in df.columns]
+    cols    = [c for c in factor_cols if c in df.columns]
     df_fund = df[[f'{fund}_Excess'] + cols].dropna()
     if len(df_fund) < window:
         return pd.DataFrame()
     betas, dates = [], []
-    for i in range(window - 1, len(df_fund)):
+    for i in range(window-1, len(df_fund)):
         y_win = df_fund[f'{fund}_Excess'].iloc[i-window+1:i+1].values
         X_win = df_fund[cols].iloc[i-window+1:i+1].values
-        X_ = np.column_stack([np.ones(len(X_win)), X_win])
-        coef, *_ = np.linalg.lstsq(X_, y_win, rcond=None)
+        X_    = np.column_stack([np.ones(len(X_win)), X_win])
+        coef,*_ = np.linalg.lstsq(X_, y_win, rcond=None)
         betas.append(coef[1:])
         dates.append(df_fund.index[i])
     return pd.DataFrame(betas, index=dates, columns=cols)
@@ -158,10 +177,9 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
 # ─── STREAMLIT UI ──────────────────────────
 
 st.title('Multi‑Factor Exposures Dashboard')
-
 st.markdown("""
 Analyze static and rolling multi‑factor betas for any fund/ETF/index.  
-All price data is loaded from local CSVs—no live Yahoo API calls at runtime.
+FI Carry is now the yield spread between TLT and SHY.
 """)
 
 fund_ticker = st.text_input('Fund ticker (e.g. SGIIX)', value='SGIIX')
@@ -195,4 +213,4 @@ if st.button('Run Analysis'):
             else:
                 st.warning(f"Not enough history for a {window}-month window.")
 
-        st.caption('Data loaded from static CSVs in Factor_Attribution_csvs/ folder.')
+        st.caption('Price data from CSVs; FI Carry is TLT_Yield - SHY_Yield.')
