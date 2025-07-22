@@ -10,14 +10,14 @@ CSV_DIR  = os.path.join(BASE_DIR, "Factor_Attribution_csvs")
 
 factor_tickers = [
     'SPY','TLT','HYG','DBC','EEM','UUP','TIP',
-    'SVXY','SHY','CWY','SPLV','QQQ','VIG','IVE','IWM','ACWI',
+    'SVXY','SHY','CWY','USMV','MTUM','QUAL','IVE','IWM','ACWI',
     'GLD','USO','VIXY'
 ]
 
 rename_map = {
     'SPY':'Equity','TLT':'Interest Rates','HYG':'Credit','DBC':'Commodities',
     'EEM':'Emerging Markets','UUP':'FX','TIP':'Real Yields','SVXY':'Equity Short Vol',
-    'CWY':'FX Carry','SPLV':'Low Risk','QQQ':'Momentum','VIG':'Quality',
+    'CWY':'FX Carry','USMV':'Low Risk','MTUM':'Momentum','QUAL':'Quality',
     'IVE':'Value','IWM':'Small Cap','ACWI':'Local Equity Proxy','GLD':'Gold',
     'USO':'Oil','VIXY':'Volatility'
 }
