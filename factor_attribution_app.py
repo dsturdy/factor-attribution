@@ -188,11 +188,10 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
 
 st.title('Multi‑Factor Exposures Dashboard')
 st.markdown("""
-Analyze static and rolling multi‑factor betas for any fund/ETF/index.  
-**FI Carry** is now the monthly **yield spread** (TLT_Yield − SHY_Yield).
+Analyze static and rolling multi‑factor betas for various Funds/ETFs/Indexes
 """)
 
-fund_ticker = st.text_input('Fund ticker (e.g. SGIIX)', value='SGIIX')
+fund_ticker = st.text_input('Fund ticker (e.g. SPY)', value='')
 window      = st.slider('Rolling window (months)', 12, 60, 36, 6)
 top_n       = st.slider('Max betas to plot (plotly)', 2, 10, 5)
 
