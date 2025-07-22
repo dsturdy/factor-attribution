@@ -18,14 +18,16 @@ rename_map = {
     'SPY':'Equity','TLT':'Interest Rates','HYG':'Credit','DBC':'Commodities',
     'EEM':'Emerging Markets','UUP':'FX','TIP':'Real Yields','SVXY':'Equity Short Vol',
     'CWY':'FX Carry','USMV':'Low Risk','MTUM':'Momentum','QUAL':'Quality',
-    'IVE':'Value','IWM':'Small Cap','GLD':'Gold','USO':'Oil','VIXY':'Volatility'
+    'IVE':'Value','IWM':'Small Cap','ACWI':'Local Equity Proxy','GLD':'Gold',
+    'USO':'Oil','VIXY':'Volatility'
 }
 
+# Final list of factor columns, including FI Carry, FX Carry, etc.
 factor_cols = [
     'Equity','Interest Rates','Credit','Commodities','Emerging Markets','FX',
-    'Real Yields','Local Inflation','Local Equity','Equity Short Vol',
-    'FI Carry','FX Carry','Trend','Low Risk','Momentum','Quality','Value',
-    'Small Cap','Gold','Oil','Volatility'
+    'Real Yields','Local Inflation','Local Equity','Equity Short Vol','FI Carry',
+    'FX Carry','Trend','Low Risk','Momentum','Quality','Value','Small Cap',
+    'Gold','Oil','Volatility'
 ]
 
 # ─── HELPERS ─────────────────────
@@ -39,32 +41,31 @@ def load_prices_from_csv(ticker):
     return df
 
 def load_yield_from_csv(ticker):
+    """
+    Load yields (e.g. TLT_Yield.csv, SHY_Yield.csv) where the CSV has
+    columns ['Date','Close'] or ['Date','Adj Close'] or ['Date','Yield'].
+    Converts 4.123 → 0.04123.
+    """
     path = os.path.join(CSV_DIR, f"{ticker}_Yield.csv")
     if not os.path.exists(path):
         st.error(f"No yield CSV for {ticker} at {path}")
         return pd.Series(dtype=float)
-
     df = pd.read_csv(path, parse_dates=["Date"], index_col="Date")
-    # pick the right column name and convert percentage to decimal
-    for col in ("Yield", "Adj Close", "Close"):
+    for col in ("Yield","Adj Close","Close"):
         if col in df.columns:
-            # assume values like 4.123 represent 4.123%
-            series = df[col] / 100.0
-            series.name = ticker  # optional, for clarity
-            return series
-
+            return (df[col] / 100.0).rename(ticker)
     st.error(f"No valid yield column in {path}; found: {df.columns.tolist()}")
     return pd.Series(dtype=float)
-
 
 def download_prices(tickers):
     dfs = []
     for t in tickers:
         df = load_prices_from_csv(t)
-        if df.empty: 
+        if df.empty:
             continue
         col = "Adj Close" if "Adj Close" in df.columns else "Close"
-        dfs.append(df[[col]].rename(columns={col: t}))
+        frame = df[[col]].rename(columns={col: t})
+        dfs.append(frame)
     if not dfs:
         return pd.DataFrame()
     prices = pd.concat(dfs, axis=1)
@@ -73,11 +74,12 @@ def download_prices(tickers):
     return prices
 
 def prepare_factors():
-    # load factor price returns
+    # 1) Load price returns
     price_df = download_prices(factor_tickers)
     if price_df.empty:
         return pd.DataFrame()
-    # monthly resample
+
+    # 2) Resample to month start, take last price, compute returns
     price_df = price_df.resample('MS').last()
     cutoff   = pd.Timestamp.today().normalize().replace(day=1)
     price_df = price_df[price_df.index < cutoff]
@@ -85,46 +87,43 @@ def prepare_factors():
 
     f = raw_rets.rename(columns=rename_map)
 
-    # Local Equity
-    if 'Equity' in f and 'ACWI' in raw_rets:
+    # 3) Local Equity (Equity minus ACWI)
+    if 'Equity' in f.columns and 'ACWI' in raw_rets.columns:
         eq, acwi = f['Equity'].align(raw_rets['ACWI'], join='inner')
         f.loc[eq.index, 'Local Equity'] = eq - acwi
     else:
         f['Local Equity'] = pd.NA
 
-    # Local Inflation
-    if 'TIP' in raw_rets and 'TLT' in raw_rets:
+    # 4) Local Inflation (TIP minus TLT returns)
+    if 'TIP' in raw_rets.columns and 'TLT' in raw_rets.columns:
         tip, tlt = raw_rets['TIP'].align(raw_rets['TLT'], join='inner')
         f.loc[tip.index, 'Local Inflation'] = tip - tlt
     else:
         f['Local Inflation'] = pd.NA
 
-    # FI Carry as yield spread
-    tlt_yield = load_yield_from_csv("TLT")
-    shy_yield = load_yield_from_csv("SHY")
-    if not tlt_yield.empty and not shy_yield.empty:
-        tlt_y, shy_y = tlt_yield.align(shy_yield, join="inner")
-        f.loc[tlt_y.index, 'FI Carry'] = tlt_y - shy_y
-    else:
-        f['FI Carry'] = pd.NA
+    # 5) FI Carry = monthly yield spread TLT_Yield - SHY_Yield
+    tlt_month = load_yield_from_csv("TLT").resample('MS').last()
+    shy_month = load_yield_from_csv("SHY").resample('MS').last()
+    fi_carry  = (tlt_month - shy_month).reindex(f.index)
+    f['FI Carry'] = fi_carry
 
-    # Trend (12‑month SPY price return)
-    if 'SPY' in price_df:
+    # 6) Trend = 12‑month return of SPY
+    if 'SPY' in price_df.columns:
         f['Trend'] = price_df['SPY'].pct_change(12)
     else:
         f['Trend'] = pd.NA
 
-    # keep only requested columns
+    # 7) Keep only the factors in factor_cols (and in f.columns)
     return f[[c for c in factor_cols if c in f.columns]]
 
 def get_rf(index):
-    # unchanged: pulls from ^IRX CSV
+    # Load ^IRX CSV (risk‑free rate), monthly align to index
     df = load_prices_from_csv("^IRX")
-    if df.empty or ("Close" not in df.columns and "Adj Close" not in df.columns):
+    if df.empty:
         return pd.Series(0.0, index=index, name='RF')
     col = "Adj Close" if "Adj Close" in df.columns else "Close"
-    rf = df[col] / 1200
-    return rf.reindex(index, method='ffill').fillna(0)
+    rf = (df[col] / 1200.0).resample('MS').last()
+    return rf.reindex(index, method='ffill').fillna(0.0)
 
 def load_and_merge_all_data(fund_tickers):
     factors = prepare_factors()
@@ -177,7 +176,9 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
     if rolling.empty:
         return None
     top = rolling.std().nlargest(top_n).index
-    dfm = rolling[top].reset_index().melt(id_vars='index', var_name='Factor', value_name='Beta')
+    dfm = rolling[top].reset_index().melt(
+        id_vars='index', var_name='Factor', value_name='Beta'
+    )
     fig = px.line(dfm, x='index', y='Beta', color='Factor',
                   title=f"Rolling Betas: Top {top_n} Most Variable Factors")
     fig.update_layout(legend=dict(orientation="h", y=-0.2))
@@ -188,7 +189,7 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
 st.title('Multi‑Factor Exposures Dashboard')
 st.markdown("""
 Analyze static and rolling multi‑factor betas for any fund/ETF/index.  
-FI Carry is now the yield spread between TLT and SHY.
+**FI Carry** is now the monthly **yield spread** (TLT_Yield − SHY_Yield).
 """)
 
 fund_ticker = st.text_input('Fund ticker (e.g. SGIIX)', value='SGIIX')
@@ -201,6 +202,7 @@ if st.button('Run Analysis'):
     else:
         with st.spinner('Loading and analyzing data...'):
             df = load_and_merge_all_data([fund_ticker])
+
         if df is None or df.empty:
             st.error(f'No usable data for ticker {fund_ticker}.')
         else:
@@ -222,4 +224,4 @@ if st.button('Run Analysis'):
             else:
                 st.warning(f"Not enough history for a {window}-month window.")
 
-        st.caption('Price data from CSVs; FI Carry is TLT_Yield - SHY_Yield.')
+        st.caption('Prices and yields loaded from CSVs; no live yfinance calls at runtime.')
