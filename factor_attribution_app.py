@@ -186,7 +186,7 @@ def plot_rolling_betas_plotly(rolling, top_n=5):
 
 # ─── STREAMLIT UI ──────────────────────────
 
-st.title('Multi‑Factor Exposures Dashboard')
+st.title('Factor Attribution Dashboard')
 st.markdown("""
 Analyze static and rolling multi‑factor betas for various Funds/ETFs/Indexes
 """)
