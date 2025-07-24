@@ -223,4 +223,4 @@ if st.button('Run Analysis'):
             else:
                 st.warning(f"Not enough history for a {window}-month window.")
 
-        st.caption('Prices and yields loaded from CSVs; no live yfinance calls at runtime.')
+      
