@@ -18,14 +18,14 @@ rename_map = {
     'SPY':'Equity','TLT':'Interest Rates','HYG':'Credit','DBC':'Commodities',
     'EEM':'Emerging Markets','UUP':'FX','TIP':'Real Yields','SVXY':'Equity Short Vol',
     'CWY':'FX Carry','USMV':'Low Risk','MTUM':'Momentum','QUAL':'Quality',
-    'IVE':'Value','IWM':'Small Cap','ACWI':'Local Equity Proxy','GLD':'Gold',
+    'IVE':'Value','IWM':'Small Cap','ACWI':'Global Equity Proxy','GLD':'Gold',
     'USO':'Oil','VIXY':'Volatility'
 }
 
 # Final list of factor columns, including FI Carry, FX Carry, etc.
 factor_cols = [
     'Equity','Interest Rates','Credit','Commodities','Emerging Markets','FX',
-    'Real Yields','Local Inflation','Local Equity','Equity Short Vol','FI Carry',
+    'Real Yields','Local Inflation','Global Equity','Equity Short Vol','FI Carry',
     'FX Carry','Trend','Low Risk','Momentum','Quality','Value','Small Cap',
     'Gold','Oil','Volatility'
 ]
