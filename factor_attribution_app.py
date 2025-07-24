@@ -18,7 +18,7 @@ rename_map = {
     'SPY':'Equity','TLT':'Interest Rates','HYG':'Credit','DBC':'Commodities',
     'EEM':'Emerging Markets','UUP':'FX','TIP':'Real Yields','SVXY':'Equity Short Vol',
     'CWY':'FX Carry','USMV':'Low Risk','MTUM':'Momentum','QUAL':'Quality',
-    'IVE':'Value','IWM':'Small Cap','ACWI':'Global Equity Proxy','GLD':'Gold',
+    'IVE':'Value','IWM':'Small Cap','ACWI':'Local Equity Proxy','GLD':'Gold',
     'USO':'Oil','VIXY':'Volatility'
 }
 
@@ -90,7 +90,7 @@ def prepare_factors():
     # 3) Local Equity (Equity minus ACWI)
     if 'Equity' in f.columns and 'ACWI' in raw_rets.columns:
         eq, acwi = f['Equity'].align(raw_rets['ACWI'], join='inner')
-        f.loc[eq.index, 'Local Equity'] = eq - acwi
+        f.loc[eq.index, 'Global Equity'] = acwi
     else:
         f['Local Equity'] = pd.NA
 
