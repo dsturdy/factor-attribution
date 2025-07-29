@@ -190,7 +190,7 @@ st.title('Factor Attribution Dashboard')
 st.markdown("""
 Analyze static and rolling multi‑factor betas for various Funds/ETFs/Indexes<br>
 App Created by Dylan Sturdevant
-""")
+""", unsafe_allow_html=True)
 
 fund_ticker = st.text_input('Fund ticker (e.g. SPY)', value='')
 window      = st.slider('Rolling window (months)', 12, 60, 36, 6)
