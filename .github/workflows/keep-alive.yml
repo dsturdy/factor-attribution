@@ -1,8 +1,11 @@
 name: Keep Streamlit App Alive
 
 on:
+  # Scheduled trigger: every 30 minutes
   schedule:
-    - cron: '*/30 * * * *'  # every 30 minutes
+    - cron: '*/30 * * * *'
+  # Allow manual trigger from the Actions UI
+  workflow_dispatch:
 
 jobs:
   ping:
@@ -10,5 +13,9 @@ jobs:
     steps:
       - name: Wake Streamlit app
         run: |
-          echo "Pinging factor-attribution.streamlit.app…"
-          curl -fsS https://factor-attribution.streamlit.app/ || true
+          echo "Pinging public share.streamlit.io URL…"
+          HTTP_CODE=$(
+            curl -o /dev/null -s -w "%{http_code}" \
+              https://share.streamlit.io/dsturdy/factor-attribution/main/factor_attribution_app.py
+          )
+          echo "HTTP status code: $HTTP_CODE"
