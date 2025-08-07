@@ -1,10 +1,11 @@
+# .github/workflows/keep-alive.yml
+
 name: Keep Streamlit App Alive
 
 on:
-  # Scheduled trigger: every 30 minutes
+  # fire every 15 minutes
   schedule:
-    - cron: '*/30 * * * *'
-  # Allow manual trigger from the Actions UI
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
