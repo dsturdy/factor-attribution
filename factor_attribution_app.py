@@ -298,52 +298,56 @@ def compute_rolling(df: pd.DataFrame, fund: str, window: int = 36) -> pd.DataFra
 def plot_rolling_betas_plotly(rolling: pd.DataFrame, top_n: int = 5):
     """
     Safely pick the top_n most time-varying factors and plot them with Plotly,
-    with clean rounded hover text and no KeyError.
+    with correct hover formatting and guaranteed no KeyError from melt.
     """
     if rolling.empty:
         return None
 
-    # -------------------------
-    # SAFE COLUMN SELECTION
-    # -------------------------
-    # drop any columns with NaN std (flat or empty series)
+    # --- Clean columns (remove NaN std or empty series) ---
     valid_cols = rolling.columns[rolling.std().notna()]
     if valid_cols.empty:
         return None
 
-    # avoid selecting more than available columns
+    # Number of factors to use
     n = min(top_n, len(valid_cols))
 
-    # top N most variable columns
+    # Most variable factors
     top_factors = rolling[valid_cols].std().nlargest(n).index.tolist()
 
-    # melt into long form for Plotly
-    dfm = (
-        rolling[top_factors]
-        .reset_index()
-        .melt(id_vars="index", var_name="Factor", value_name="Beta")
+    # --- Build tidy dataframe ---
+    df_reset = rolling[top_factors].reset_index()
+
+    # Force the index column to be called "index" no matter what
+    index_col_name = rolling.index.name or "index"
+    df_reset = df_reset.rename(columns={index_col_name: "index"})
+
+    # Melt into long form
+    dfm = df_reset.melt(
+        id_vars="index",
+        var_name="Factor",
+        value_name="Beta"
     )
 
-    # -------------------------
-    # PLOTLY FIGURE
-    # -------------------------
+    # --- Plotly figure ---
     fig = px.line(
         dfm,
         x="index",
         y="Beta",
         color="Factor",
-        title=f"Rolling Betas: Top {n} Most Variable Factors",
+        title=f"Rolling Betas: Top {n} Most Variable Factors"
     )
 
-    # Rounded hover with no extra junk
     fig.update_traces(
-        hovertemplate="<b>%{fullData.name}</b><br>" +
-                      "Date: %{x|%b %Y}<br>" +
-                      "Beta: %{y:.3f}<extra></extra>"
+        hovertemplate=(
+            "<b>%{fullData.name}</b><br>"
+            "Date: %{x|%b %Y}<br>"
+            "Beta: %{y:.3f}"
+            "<extra></extra>"
+        )
     )
 
     fig.update_layout(
-        template="plotly_white",      # or "plotly_dark" if preferred
+        template="plotly_white",
         legend=dict(orientation="h", y=1.1),
         margin=dict(l=10, r=10, t=40, b=10),
     )
@@ -352,7 +356,6 @@ def plot_rolling_betas_plotly(rolling: pd.DataFrame, top_n: int = 5):
     fig.update_xaxes(title="")
 
     return fig
-
 
 
 # =========================
