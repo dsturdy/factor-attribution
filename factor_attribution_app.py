@@ -295,29 +295,47 @@ def compute_rolling(df: pd.DataFrame, fund: str, window: int = 36) -> pd.DataFra
     idx = df_fund.index[window - 1:]
     return pd.DataFrame(betas, index=idx, columns=cols)
 
-
 def plot_rolling_betas_plotly(rolling: pd.DataFrame, top_n: int = 5):
     """
-    Pick the top_n most time varying factors and plot them with Plotly.
+    Safely pick the top_n most time-varying factors and plot them with Plotly,
+    with clean rounded hover text and no KeyError.
     """
     if rolling.empty:
         return None
 
-    top = rolling.std().nlargest(top_n).index
-    dfm = rolling[top].reset_index().melt(
-        id_vars="index", var_name="Factor", value_name="Beta"
+    # -------------------------
+    # SAFE COLUMN SELECTION
+    # -------------------------
+    # drop any columns with NaN std (flat or empty series)
+    valid_cols = rolling.columns[rolling.std().notna()]
+    if valid_cols.empty:
+        return None
+
+    # avoid selecting more than available columns
+    n = min(top_n, len(valid_cols))
+
+    # top N most variable columns
+    top_factors = rolling[valid_cols].std().nlargest(n).index.tolist()
+
+    # melt into long form for Plotly
+    dfm = (
+        rolling[top_factors]
+        .reset_index()
+        .melt(id_vars="index", var_name="Factor", value_name="Beta")
     )
 
-    # Build Plotly figure
+    # -------------------------
+    # PLOTLY FIGURE
+    # -------------------------
     fig = px.line(
         dfm,
         x="index",
         y="Beta",
         color="Factor",
-        title=f"Rolling Betas: Top {top_n} Most Variable Factors",
+        title=f"Rolling Betas: Top {n} Most Variable Factors",
     )
 
-    # Force 3-decimal rounded hover
+    # Rounded hover with no extra junk
     fig.update_traces(
         hovertemplate="<b>%{fullData.name}</b><br>" +
                       "Date: %{x|%b %Y}<br>" +
@@ -325,14 +343,16 @@ def plot_rolling_betas_plotly(rolling: pd.DataFrame, top_n: int = 5):
     )
 
     fig.update_layout(
-        template="plotly_white",
+        template="plotly_white",      # or "plotly_dark" if preferred
         legend=dict(orientation="h", y=1.1),
         margin=dict(l=10, r=10, t=40, b=10),
     )
+
     fig.update_yaxes(title="Beta")
     fig.update_xaxes(title="")
 
     return fig
+
 
 
 # =========================
