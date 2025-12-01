@@ -352,20 +352,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-col1, col2, col3 = st.columns([3, 2, 2])
+fund_ticker = st.text_input(
+    "Fund ticker",
+    value="",
+    placeholder="SPY, EFA, AGG, etc."
+)
 
-with col1:
-    fund_ticker = st.text_input(
-        "Fund ticker",
-        value="",
-        placeholder="SPY, EFA, AGG, etc."
-    )
+window = st.slider(
+    "Rolling window (months)",
+    min_value=12,
+    max_value=60,
+    value=36,
+    step=6
+)
 
-with col2:
-    window = st.slider("Rolling window (months)", 12, 60, 36, step=6)
-
-with col3:
-    top_n = st.slider("Top N betas to plot", 2, 10, 5)
+top_n = st.slider(
+    "Top N betas to plot (Plotly)",
+    min_value=2,
+    max_value=10,
+    value=5
+)
 
 
 run = st.button("Run analysis")
