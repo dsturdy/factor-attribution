@@ -357,6 +357,50 @@ def plot_rolling_betas_plotly(rolling: pd.DataFrame, top_n: int = 5):
 
     return fig
 
+def plot_rolling_level_view(rolling: pd.DataFrame):
+    """
+    Clean Plotly version of the full rolling betas (level view),
+    with rounded hover.
+    """
+    if rolling.empty:
+        return None
+
+    # Long-form tidy dataframe
+    dfm = (
+        rolling.reset_index()
+               .rename(columns={rolling.index.name or "index": "index"})
+               .melt(id_vars="index", var_name="Factor", value_name="Beta")
+    )
+
+    fig = px.line(
+        dfm,
+        x="index",
+        y="Beta",
+        color="Factor",
+        title="36 month rolling betas - level view"
+    )
+
+    fig.update_traces(
+        hovertemplate=(
+            "<b>%{fullData.name}</b><br>"
+            "Date: %{x|%b %Y}<br>"
+            "Beta: %{y:.3f}"
+            "<extra></extra>"
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",  # match your theme
+        legend=dict(orientation="h", y=1.1),
+        margin=dict(l=10, r=10, t=50, b=10),
+    )
+
+    fig.update_yaxes(title="Beta")
+    fig.update_xaxes(title="")
+
+    return fig
+
+
 
 # =========================
 # STREAMLIT UI
@@ -443,7 +487,9 @@ if run:
                 )
             else:
                 st.subheader(f"{window} month rolling betas - level view")
-                st.line_chart(rolling)
+                fig_level = plot_rolling_level_view(rolling)
+                st.plotly_chart(fig_level, use_container_width=True)
+
 
                 st.subheader("Current (last month) betas")
                 last_row = rolling.iloc[-1].sort_values(key=np.abs, ascending=False)
