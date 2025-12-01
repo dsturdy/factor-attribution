@@ -308,20 +308,29 @@ def plot_rolling_betas_plotly(rolling: pd.DataFrame, top_n: int = 5):
         id_vars="index", var_name="Factor", value_name="Beta"
     )
 
+    # Build Plotly figure
     fig = px.line(
         dfm,
         x="index",
         y="Beta",
         color="Factor",
-        title=f"Rolling betas - top {top_n} most variable factors",
+        title=f"Rolling Betas: Top {top_n} Most Variable Factors",
     )
+
+    # Force 3-decimal rounded hover
+    fig.update_traces(
+        hovertemplate="<b>%{fullData.name}</b><br>" +
+                      "Date: %{x|%b %Y}<br>" +
+                      "Beta: %{y:.3f}<extra></extra>"
+    )
+
     fig.update_layout(
         template="plotly_white",
         legend=dict(orientation="h", y=1.1),
         margin=dict(l=10, r=10, t=40, b=10),
     )
-    fig.update_xaxes(title="")
     fig.update_yaxes(title="Beta")
+    fig.update_xaxes(title="")
 
     return fig
 
@@ -343,16 +352,21 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-col1, col2, col3 = st.columns([2, 1, 1])
+col1, col2, col3 = st.columns([3, 2, 2])
 
 with col1:
-    fund_ticker = st.text_input("Fund ticker (for example SPY, EFA, AGG)", value="")
+    fund_ticker = st.text_input(
+        "Fund ticker",
+        value="",
+        placeholder="SPY, EFA, AGG, etc."
+    )
 
 with col2:
     window = st.slider("Rolling window (months)", 12, 60, 36, step=6)
 
 with col3:
-    top_n = st.slider("Max betas to plot (Plotly)", 2, 10, 5)
+    top_n = st.slider("Top N betas to plot", 2, 10, 5)
+
 
 run = st.button("Run analysis")
 
