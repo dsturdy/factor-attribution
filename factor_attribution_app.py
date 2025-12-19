@@ -114,8 +114,8 @@ def download_prices(tickers) -> pd.DataFrame:
     dfs = []
 
     for t in tickers:
-    t = str(t).strip().upper()
-    df = load_prices_from_csv(t)
+        t = str(t).strip().upper()
+        df = load_prices_from_csv(t)
 
         if df.empty:
             continue
