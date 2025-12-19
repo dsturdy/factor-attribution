@@ -114,7 +114,9 @@ def download_prices(tickers) -> pd.DataFrame:
     dfs = []
 
     for t in tickers:
-        df = load_prices_from_csv(t)
+    t = str(t).strip().upper()
+    df = load_prices_from_csv(t)
+
         if df.empty:
             continue
 
@@ -423,7 +425,8 @@ fund_ticker = st.text_input(
     "Fund ticker",
     value="",
     placeholder="SPY, EFA, AGG, etc."
-)
+).strip().upper()
+
 
 window = st.slider(
     "Rolling window (months)",
