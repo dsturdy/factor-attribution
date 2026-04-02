@@ -443,7 +443,7 @@ with tab_factor:
                     st.dataframe(
                         static_table.style
                             .format("{:,.3f}")
-                            .applymap(color_beta, subset=["beta"]),
+                            .map(color_beta, subset=["beta"]),
                         use_container_width=True,
                     )
 
