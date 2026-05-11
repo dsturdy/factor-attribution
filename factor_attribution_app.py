@@ -15,7 +15,7 @@ CSV_DIR  = os.path.join(BASE_DIR, "Factor_Attribution_4_csvs")
 
 factor_tickers = [
     "SPY", "ACWI", "TLT", "HYG", "DBC", "EEM", "UUP", "TIP",
-    "SVXY", "SHY", "CWY", "USMV", "MTUM", "QUAL", "IVE", "IWM",
+    "SVXY", "SHY", "USMV", "MTUM", "QUAL", "IVE", "IWM",
     "GLD", "USO", "VIXY", "^TNX", "^IRX"
 ]
 
@@ -27,7 +27,6 @@ rename_map = {
     "UUP":  "FX",
     "TIP":  "Real Yields",
     "SVXY": "Equity Short Vol",
-    "CWY":  "FX Carry",
     "USMV": "Low Risk",
     "MTUM": "Momentum",
     "QUAL": "Quality",
@@ -40,10 +39,26 @@ rename_map = {
 }
 
 factor_cols = [
-    "Global Equity", "Interest Rates", "Credit", "Commodities",
-    "Emerging Markets", "FX", "Real Yields", "Local Inflation",
-    "Equity Short Vol", "FX Carry", "Trend", "Low Risk",
-    "Momentum", "Quality", "Value", "Small Cap", "Gold", "Oil", "Volatility", "FI Carry",
+    "Global Equity",
+    "Interest Rates",
+    "Credit",
+    "Commodities",
+    "Emerging Markets",
+    "FX",
+    "Real Yields",
+    "Local Inflation",
+    "Equity Short Vol",
+    "FX Carry",
+    "Trend",
+    "Low Risk",
+    "Momentum",
+    "Quality",
+    "Value",
+    "Small Cap",
+    "Gold",
+    "Oil",
+    "Volatility",
+    "FI Carry",
 ]
 
 PLOTLY_THEME = "plotly_dark"
@@ -87,6 +102,11 @@ def prepare_factors() -> pd.DataFrame:
     price_df = price_df[price_df.index < cutoff]
     raw_rets = price_df.pct_change().dropna()
     f = raw_rets.rename(columns=rename_map)
+    if "EEM" in raw_rets.columns and "UUP" in raw_rets.columns:
+        f["FX Carry"] = raw_rets["EEM"] - raw_rets["UUP"]
+    else:
+        f["FX Carry"] = np.nan
+
     if "TIP" in raw_rets.columns and "TLT" in raw_rets.columns:
         tip, tlt = raw_rets["TIP"].align(raw_rets["TLT"], join="inner")
         f.loc[tip.index, "Local Inflation"] = tip - tlt
