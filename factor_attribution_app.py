@@ -5,7 +5,6 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import statsmodels.api as sm
-<<<<<<< HEAD
 
 # =========================
 # CONFIG
@@ -13,14 +12,6 @@ import statsmodels.api as sm
 
 BASE_DIR = os.path.dirname(__file__)
 CSV_DIR  = os.path.join(BASE_DIR, "Factor_Attribution_4_csvs")
-=======
-
-# =========================
-# CONFIG
-# =========================
-
-CSV_DIR = '/Users/dylansturdevant/Desktop/untitled folder 2/Factor_Attribution_3_csvs'
->>>>>>> d75ac9c0 (update to latest app version)
 
 factor_tickers = [
     "SPY", "ACWI", "TLT", "HYG", "DBC", "EEM", "UUP", "TIP",
