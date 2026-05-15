@@ -460,7 +460,7 @@ with tab_factor:
 # ─────────────────────────────────────────────
 with tab_scorecard:
     st.markdown("### Manager Oversight Scorecard")
-    st.caption("Flags are rule-based: 🔴 Under Review · 🟡 On Watch · 🟢 Approved")
+    st.caption("Flags are rule-based: Under Review · On Watch · Approved")
 
     col_inp, col_bench = st.columns([3, 1])
     with col_inp:
@@ -515,9 +515,9 @@ with tab_scorecard:
                 sc_df = pd.DataFrame(scorecard_rows)
 
                 k1, k2, k3 = st.columns(3)
-                k1.metric("Approved",     sc_df["Status"].str.startswith("🟢").sum())
-                k2.metric("⚠On Watch",     sc_df["Status"].str.startswith("🟡").sum())
-                k3.metric("Under Review", sc_df["Status"].str.startswith("🔴").sum())
+                k1.metric("Approved",     sc_df["Status"].str.startswith("").sum())
+                k2.metric("⚠On Watch",     sc_df["Status"].str.startswith("").sum())
+                k3.metric("Under Review", sc_df["Status"].str.startswith("").sum())
 
                 st.divider()
 
