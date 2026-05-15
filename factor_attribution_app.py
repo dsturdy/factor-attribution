@@ -249,10 +249,10 @@ def flag_manager(metrics: pd.DataFrame, active_col: bool) -> tuple[str, str]:
     sh1y = metrics.loc["1Y", "Sharpe"]
     dd1y = metrics.loc["1Y", "Max Drawdown"]
     if r1y < -0.05 or sh1y < 0:
-        return "🔴 Under Review", f"1Y Return: {r1y:.1%} | Sharpe: {sh1y:.2f}"
+        return "Under Review", f"1Y Return: {r1y:.1%} | Sharpe: {sh1y:.2f}"
     if r1y < 0.0 or dd1y < -0.15:
-        return "🟡 On Watch", f"1Y Return: {r1y:.1%} | Max DD: {dd1y:.1%}"
-    return "🟢 Approved", f"1Y Return: {r1y:.1%} | Sharpe: {sh1y:.2f}"
+        return "On Watch", f"1Y Return: {r1y:.1%} | Max DD: {dd1y:.1%}"
+    return "Approved", f"1Y Return: {r1y:.1%} | Sharpe: {sh1y:.2f}"
 
 
 # =========================
